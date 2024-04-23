@@ -2,6 +2,7 @@ package cache
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -64,13 +65,17 @@ func TestRedisPubSub(t *testing.T) {
 
 	ctx := context.Background()
 
+	lock := &sync.Mutex{}
+
 	addCallback := func(c *RedisStorageBackend[string, string], items map[string]string) {
 		c.AddCallback(func(event CacheEvent[string, string]) {
+			lock.Lock()
 			if event.Type == CacheEventSet {
 				items[event.Entry.Key] = *event.Entry.Value
 			} else if event.Type == CacheEventRemove {
 				delete(items, event.Entry.Key)
 			}
+			lock.Unlock()
 		})
 	}
 
@@ -108,7 +113,9 @@ func TestRedisPubSub(t *testing.T) {
 
 	time.Sleep(10 * time.Millisecond)
 
+	lock.Lock()
 	localItemsTwoValue, ok := localItemsTwo["foo"]
+	lock.Unlock()
 	assert.True(t, ok)
 	assert.Equal(t, "bar", localItemsTwoValue)
 
@@ -117,7 +124,9 @@ func TestRedisPubSub(t *testing.T) {
 
 	time.Sleep(10 * time.Millisecond)
 
+	lock.Lock()
 	localItemsOneValue, ok := localItemsOne["fizz"]
+	lock.Unlock()
 	assert.True(t, ok)
 	assert.Equal(t, "buzz", localItemsOneValue)
 }
