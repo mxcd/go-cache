@@ -13,11 +13,19 @@ import (
 type RedisStorageBackend[K comparable, V any] struct {
 	Options   *RedisStorageBackendOptions[K]
 	Client    *redis.Client
-	Callbacks []func(*CacheEvent[K, V])
+	Callbacks []func(CacheEvent[K, V])
+}
+
+func (b *RedisStorageBackend[K, V]) GetStringKey(key K) string {
+	if b.Options.KeyPrefix == "" {
+		return b.Options.CacheKey.Marshal(key)
+	} else {
+		return b.Options.KeyPrefix + ":" + b.Options.CacheKey.Marshal(key)
+	}
 }
 
 func (b *RedisStorageBackend[K, V]) Get(ctx context.Context, key K) (*V, error) {
-	data, err := b.Client.Get(ctx, b.Options.CacheKey.Marshal(key)).Bytes()
+	data, err := b.Client.Get(ctx, b.GetStringKey(key)).Bytes()
 	if err != nil {
 		return nil, err
 	}
@@ -31,18 +39,18 @@ func (b *RedisStorageBackend[K, V]) Get(ctx context.Context, key K) (*V, error) 
 	return &value, nil
 }
 
-func (b *RedisStorageBackend[K, V]) Set(ctx context.Context, key K, value V) (bool, error) {
+func (b *RedisStorageBackend[K, V]) Set(ctx context.Context, key K, value V) error {
 	data, err := msgpack.Marshal(value)
 	if err != nil {
-		return false, err
+		return err
 	}
 
-	err = b.Client.Set(ctx, b.Options.CacheKey.Marshal(key), data, b.Options.TTL).Err()
+	err = b.Client.Set(ctx, b.GetStringKey(key), data, b.Options.TTL).Err()
 	if err != nil {
-		return false, err
+		return err
 	}
 
-	if *b.Options.PubSub {
+	if b.Options.PubSub {
 		err = b.PublishEvent(ctx, &CacheEvent[K, V]{
 			Entry: &CacheEntry[K, V]{
 				Key:   key,
@@ -51,20 +59,20 @@ func (b *RedisStorageBackend[K, V]) Set(ctx context.Context, key K, value V) (bo
 			Type: CacheEventSet,
 		})
 		if err != nil {
-			return false, err
+			return err
 		}
 	}
 
-	return true, nil
+	return nil
 }
 
-func (b *RedisStorageBackend[K, V]) Remove(ctx context.Context, key K) (bool, error) {
-	err := b.Client.Del(ctx, b.Options.CacheKey.Marshal(key)).Err()
+func (b *RedisStorageBackend[K, V]) Remove(ctx context.Context, key K) error {
+	err := b.Client.Del(ctx, b.GetStringKey(key)).Err()
 	if err != nil {
-		return false, err
+		return err
 	}
 
-	if *b.Options.PubSub {
+	if b.Options.PubSub {
 		err = b.PublishEvent(ctx, &CacheEvent[K, V]{
 			Entry: &CacheEntry[K, V]{
 				Key: key,
@@ -72,15 +80,15 @@ func (b *RedisStorageBackend[K, V]) Remove(ctx context.Context, key K) (bool, er
 			Type: CacheEventRemove,
 		})
 		if err != nil {
-			return false, err
+			return err
 		}
 	}
 
-	return true, nil
+	return nil
 }
 
 func (b *RedisStorageBackend[K, V]) Contains(ctx context.Context, key K) (bool, error) {
-	return b.Client.Exists(ctx, b.Options.CacheKey.Marshal(key)).Val() == 1, nil
+	return b.Client.Exists(ctx, b.GetStringKey(key)).Val() == 1, nil
 }
 
 func (b *RedisStorageBackend[K, V]) Load(ctx context.Context) ([]CacheEntry[K, V], error) {
@@ -100,7 +108,7 @@ func (b *RedisStorageBackend[K, V]) Load(ctx context.Context) ([]CacheEntry[K, V
 	return entries, nil
 }
 
-func (b *RedisStorageBackend[K, V]) AddCallback(callback func(*CacheEvent[K, V])) {
+func (b *RedisStorageBackend[K, V]) AddCallback(callback func(CacheEvent[K, V])) {
 	b.Callbacks = append(b.Callbacks, callback)
 }
 
@@ -110,7 +118,7 @@ func (b *RedisStorageBackend[K, V]) PublishEvent(ctx context.Context, event *Cac
 		return err
 	}
 
-	return b.Client.Publish(ctx, *b.Options.PubSubChannelName, data).Err()
+	return b.Client.Publish(ctx, b.Options.PubSubChannelName, data).Err()
 }
 
 type RedisStorageBackendOptions[K comparable] struct {
@@ -118,31 +126,26 @@ type RedisStorageBackendOptions[K comparable] struct {
 	TTL               time.Duration
 	CacheKey          CacheKey[K]
 	KeyPrefix         string
-	PubSub            *bool
-	PubSubChannelName *string
+	PubSub            bool
+	PubSubChannelName string
 }
 
 func NewRedisStorageBackend[K comparable, V any](options *RedisStorageBackendOptions[K]) (*RedisStorageBackend[K, V], error) {
 	client := redis.NewClient(options.RedisOptions)
 
-	if options.PubSub == nil {
-		options.PubSub = new(bool)
-		*options.PubSub = false
-	}
-
-	if *options.PubSub && options.PubSubChannelName == nil {
+	if options.PubSub && options.PubSubChannelName == "" {
 		return nil, errors.New("PubSubChannelName is required when PubSub is enabled")
 	}
 
 	b := &RedisStorageBackend[K, V]{
 		Options:   options,
 		Client:    client,
-		Callbacks: []func(*CacheEvent[K, V]){},
+		Callbacks: []func(CacheEvent[K, V]){},
 	}
 
-	if *b.Options.PubSub {
+	if b.Options.PubSub {
 		go func() {
-			pubsub := b.Client.Subscribe(context.Background(), *b.Options.PubSubChannelName)
+			pubsub := b.Client.Subscribe(context.Background(), b.Options.PubSubChannelName)
 			defer pubsub.Close()
 
 			for {
@@ -160,7 +163,7 @@ func NewRedisStorageBackend[K comparable, V any](options *RedisStorageBackendOpt
 				}
 
 				for _, callback := range b.Callbacks {
-					callback(&entry)
+					callback(entry)
 				}
 			}
 		}()

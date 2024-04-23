@@ -3,14 +3,15 @@ package cache
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/vmihailenco/msgpack/v5"
 )
 
-func (b *RedisStorageBackend[K, V]) fetchValues(ctx context.Context, keys []string, resultsChan chan<- map[K]V, wg *sync.WaitGroup) {
+func (b *RedisStorageBackend[K, V]) fetchValues(ctx context.Context, keys []string, resultsChan chan<- map[string]V, wg *sync.WaitGroup) {
 	defer wg.Done()
-	keyValues := make(map[K]V)
+	keyValues := make(map[string]V)
 	for _, key := range keys {
 		value, err := b.Client.Get(ctx, key).Bytes()
 
@@ -22,12 +23,7 @@ func (b *RedisStorageBackend[K, V]) fetchValues(ctx context.Context, keys []stri
 		var unmarshalledValue V
 		err = msgpack.Unmarshal(value, &unmarshalledValue)
 		if err == nil {
-			unmarshalledKey, err := b.Options.CacheKey.Unmarshal(key)
-			if err != nil {
-				fmt.Printf("Error marshalling key %v: %v\n", key, err)
-				continue
-			}
-			keyValues[unmarshalledKey] = unmarshalledValue
+			keyValues[key] = unmarshalledValue
 		} else {
 			fmt.Printf("Error unmarshalling value for key %s: %v\n", key, err)
 		}
@@ -38,13 +34,19 @@ func (b *RedisStorageBackend[K, V]) fetchValues(ctx context.Context, keys []stri
 func (b *RedisStorageBackend[K, V]) fetchKeysWithPrefix(ctx context.Context, prefix string, batchSize int) (map[K]V, error) {
 	var cursor uint64
 	var err error
-	keys := make(map[K]V)
-	resultsChan := make(chan map[K]V)
+	resultsChan := make(chan map[string]V)
 	var wg sync.WaitGroup
+
+	keyPrefix := ""
+	if prefix != "" {
+		keyPrefix = fmt.Sprintf("%s:", prefix)
+	}
+
+	keyPattern := fmt.Sprintf("%s*", keyPrefix)
 
 	for {
 		var scanKeys []string
-		scanKeys, cursor, err = b.Client.Scan(ctx, cursor, fmt.Sprintf("%s:*", prefix), 0).Result()
+		scanKeys, cursor, err = b.Client.Scan(ctx, cursor, keyPattern, 0).Result()
 		if err != nil {
 			close(resultsChan)
 			return nil, err
@@ -70,9 +72,17 @@ func (b *RedisStorageBackend[K, V]) fetchKeysWithPrefix(ctx context.Context, pre
 		close(resultsChan)
 	}()
 
+	keys := make(map[K]V)
 	for keyMap := range resultsChan {
-		for k, v := range keyMap {
-			keys[k] = v
+		for key, value := range keyMap {
+			key = strings.TrimPrefix(key, keyPrefix)
+			unmarshalledKey, err := b.Options.CacheKey.Unmarshal(key)
+			if err != nil {
+				fmt.Printf("Error marshalling key %v: %v\n", key, err)
+				continue
+			}
+
+			keys[unmarshalledKey] = value
 		}
 	}
 

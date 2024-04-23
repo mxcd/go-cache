@@ -53,8 +53,8 @@ func (c *LocalCache[K, V]) Get(key K) (*V, bool) {
 	return entry.Value, true
 }
 
-func (c *LocalCache[K, V]) Set(key K, value V) bool {
-	return c.Cache.Add(c.Options.CacheKey.Marshal(key), &CacheEntry[K, V]{
+func (c *LocalCache[K, V]) Set(key K, value V) {
+	c.Cache.Add(c.Options.CacheKey.Marshal(key), &CacheEntry[K, V]{
 		Key:   key,
 		Value: &value,
 	})

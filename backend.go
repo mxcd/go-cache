@@ -34,10 +34,10 @@ func (k *IntCacheKey) Unmarshal(data string) (int, error) {
 }
 
 type StorageBackend[K comparable, V any] interface {
-	Get(context.Context, CacheKey[K]) (*V, error)
-	Set(context.Context, CacheKey[K], V) (bool, error)
-	Remove(context.Context, CacheKey[K]) (bool, error)
-	Contains(context.Context, CacheKey[K]) (bool, error)
-	Load(context.Context) ([]CacheEntry[CacheKey[K], V], error)
-	AddCallback(func(CacheEvent[CacheKey[K], V]))
+	Get(context.Context, K) (*V, error)
+	Set(context.Context, K, V) error
+	Remove(context.Context, K) error
+	Contains(context.Context, K) (bool, error)
+	Load(context.Context) ([]CacheEntry[K, V], error)
+	AddCallback(func(CacheEvent[K, V]))
 }
