@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"time"
 )
 
 type CacheKey[K comparable] interface {
@@ -35,6 +36,7 @@ func (k *IntCacheKey) Unmarshal(data string) (int, error) {
 
 type StorageBackend[K comparable, V any] interface {
 	Get(context.Context, K) (*V, error)
+	Ttl(context.Context, K) (time.Duration, error)
 	Set(context.Context, K, V) error
 	Remove(context.Context, K) error
 	Contains(context.Context, K) (bool, error)

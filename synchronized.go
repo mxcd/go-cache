@@ -82,6 +82,15 @@ func (c *SynchronizedCache[K, V]) Get(ctx context.Context, key K) (*V, bool) {
 	return value, true
 }
 
+func (c *SynchronizedCache[K, V]) Ttl(ctx context.Context, key K) (time.Duration, error) {
+	ttl, err := c.remote.Ttl(ctx, key)
+	if err != nil {
+		return 0, err
+	}
+
+	return ttl, nil
+}
+
 func (c *SynchronizedCache[K, V]) Set(ctx context.Context, key K, value V) error {
 	c.local.Set(key, value)
 

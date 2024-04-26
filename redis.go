@@ -39,6 +39,10 @@ func (b *RedisStorageBackend[K, V]) Get(ctx context.Context, key K) (*V, error) 
 	return &value, nil
 }
 
+func (b *RedisStorageBackend[K, V]) Ttl(ctx context.Context, key K) (time.Duration, error) {
+	return b.Client.TTL(ctx, b.GetStringKey(key)).Result()
+}
+
 func (b *RedisStorageBackend[K, V]) Set(ctx context.Context, key K, value V) error {
 	data, err := msgpack.Marshal(value)
 	if err != nil {
