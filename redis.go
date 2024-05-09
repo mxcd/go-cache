@@ -6,6 +6,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/redis/go-redis/extra/redisotel/v9"
 	"github.com/redis/go-redis/v9"
 	"github.com/vmihailenco/msgpack/v5"
 )
@@ -136,6 +137,14 @@ type RedisStorageBackendOptions[K comparable] struct {
 
 func NewRedisStorageBackend[K comparable, V any](options *RedisStorageBackendOptions[K]) (*RedisStorageBackend[K, V], error) {
 	client := redis.NewClient(options.RedisOptions)
+
+	if err := redisotel.InstrumentTracing(client); err != nil {
+		panic(err)
+	}
+
+	if err := redisotel.InstrumentMetrics(client); err != nil {
+		panic(err)
+	}
 
 	if options.PubSub && options.PubSubChannelName == "" {
 		return nil, errors.New("PubSubChannelName is required when PubSub is enabled")
