@@ -3,6 +3,9 @@ package cache
 import (
 	"context"
 	"time"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type SynchronizedCache[K comparable, V any] struct {
@@ -18,6 +21,7 @@ type SynchronizedCacheOptions[K comparable, V any] struct {
 	StorageBackend StorageBackend[K, V]
 	RemoteAsync    bool
 	Preload        bool
+	Tracer         *trace.Tracer
 }
 
 // func (o *SynchronizedCacheOptions) GetLocalTTL() time.Duration {
@@ -75,6 +79,11 @@ func NewSynchronizedCache[K comparable, V any](options *SynchronizedCacheOptions
 }
 
 func (c *SynchronizedCache[K, V]) Get(ctx context.Context, key K) (*V, bool) {
+	if c.options.Tracer != nil {
+		spanCtx, span := (*c.options.Tracer).Start(ctx, "synchronized-cache.get", trace.WithAttributes(attribute.String("key", c.options.CacheKey.Marshal(key))))
+		defer span.End()
+		ctx = spanCtx
+	}
 	value, ok := c.local.Get(key)
 	if ok {
 		return value, true
@@ -90,6 +99,10 @@ func (c *SynchronizedCache[K, V]) Get(ctx context.Context, key K) (*V, bool) {
 }
 
 func (c *SynchronizedCache[K, V]) Ttl(ctx context.Context, key K) (time.Duration, error) {
+	if c.options.Tracer != nil {
+		_, span := (*c.options.Tracer).Start(ctx, "synchronized-cache.ttl", trace.WithAttributes(attribute.String("key", c.options.CacheKey.Marshal(key))))
+		defer span.End()
+	}
 	ttl, err := c.remote.Ttl(ctx, key)
 	if err != nil {
 		return 0, err
@@ -99,16 +112,22 @@ func (c *SynchronizedCache[K, V]) Ttl(ctx context.Context, key K) (time.Duration
 }
 
 func (c *SynchronizedCache[K, V]) Set(ctx context.Context, key K, value V) error {
+	if c.options.Tracer != nil {
+		spanCtx, span := (*c.options.Tracer).Start(ctx, "synchronized-cache.set", trace.WithAttributes(attribute.String("key", c.options.CacheKey.Marshal(key))))
+		defer span.End()
+		ctx = spanCtx
+	}
 	c.local.Set(key, value)
 
-	setRemote := func() error {
+	setRemote := func(ctx context.Context) error {
 		return c.remote.Set(ctx, key, value)
 	}
 
 	if c.options.RemoteAsync {
-		go setRemote()
+		ctx := deriveAsyncContext(ctx)
+		go setRemote(ctx)
 	} else {
-		err := setRemote()
+		err := setRemote(ctx)
 		if err != nil {
 			return err
 		}
@@ -118,16 +137,22 @@ func (c *SynchronizedCache[K, V]) Set(ctx context.Context, key K, value V) error
 }
 
 func (c *SynchronizedCache[K, V]) Remove(ctx context.Context, key K) error {
+	if c.options.Tracer != nil {
+		spanCtx, span := (*c.options.Tracer).Start(ctx, "synchronized-cache.remove", trace.WithAttributes(attribute.String("key", c.options.CacheKey.Marshal(key))))
+		defer span.End()
+		ctx = spanCtx
+	}
 	c.local.Remove(key)
 
-	removeRemote := func() error {
+	removeRemote := func(ctx context.Context) error {
 		return c.remote.Remove(ctx, key)
 	}
 
 	if c.options.RemoteAsync {
-		go removeRemote()
+		ctx := deriveAsyncContext(ctx)
+		go removeRemote(ctx)
 	} else {
-		err := removeRemote()
+		err := removeRemote(ctx)
 		if err != nil {
 			return err
 		}
@@ -137,6 +162,11 @@ func (c *SynchronizedCache[K, V]) Remove(ctx context.Context, key K) error {
 }
 
 func (c *SynchronizedCache[K, V]) Contains(ctx context.Context, key K) (bool, error) {
+	if c.options.Tracer != nil {
+		spanCtx, span := (*c.options.Tracer).Start(ctx, "synchronized-cache.contains", trace.WithAttributes(attribute.String("key", c.options.CacheKey.Marshal(key))))
+		defer span.End()
+		ctx = spanCtx
+	}
 	if c.local.Contains(key) {
 		return true, nil
 	}
@@ -147,4 +177,15 @@ func (c *SynchronizedCache[K, V]) Contains(ctx context.Context, key K) (bool, er
 	}
 
 	return ok, nil
+}
+
+func deriveAsyncContext(ctx context.Context) context.Context {
+	asyncCtx := context.Background()
+
+	span := trace.SpanFromContext(ctx)
+	if span != nil {
+		asyncCtx = trace.ContextWithSpan(asyncCtx, span)
+	}
+
+	return asyncCtx
 }
