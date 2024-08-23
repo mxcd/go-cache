@@ -66,3 +66,32 @@ func TestLocalCacheStruct(t *testing.T) {
 	assert.False(t, ok)
 	assert.Nil(t, value)
 }
+
+func TestLocalCacheLoad(t *testing.T) {
+	cache := NewLocalCache[string, string](&LocalCacheOptions[string]{
+		TTL:      0,
+		Size:     0,
+		CacheKey: &StringCacheKey{},
+	})
+
+	assert.NotNil(t, cache)
+	value, ok := cache.Get("foo")
+	assert.False(t, ok)
+	assert.Nil(t, value)
+	value, ok = cache.Get("fizz")
+	assert.False(t, ok)
+	assert.Nil(t, value)
+
+	cache.Set("foo", "bar")
+	cache.Set("fizz", "buzz")
+
+	values, err := cache.Load()
+	assert.Nil(t, err)
+	assert.Len(t, values, 2)
+
+	assert.Equal(t, "foo", values[0].Key)
+	assert.Equal(t, "bar", *values[0].Value)
+
+	assert.Equal(t, "fizz", values[1].Key)
+	assert.Equal(t, "buzz", *values[1].Value)
+}

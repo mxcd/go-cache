@@ -67,3 +67,17 @@ func (c *LocalCache[K, V]) Remove(key K) bool {
 func (c *LocalCache[K, V]) Contains(key K) bool {
 	return c.Cache.Contains(c.Options.CacheKey.Marshal(key))
 }
+
+func (c *LocalCache[K, V]) Load() ([]CacheEntry[K, V], error) {
+	keys := c.Cache.Keys()
+	entries := []CacheEntry[K, V]{}
+
+	for _, key := range keys {
+		entry, ok := c.Cache.Get(key)
+		if !ok || entry == nil {
+			continue
+		}
+		entries = append(entries, *entry)
+	}
+	return entries, nil
+}
