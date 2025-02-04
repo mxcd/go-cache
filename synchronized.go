@@ -79,7 +79,7 @@ func NewSynchronizedCache[K comparable, V any](options *SynchronizedCacheOptions
 }
 
 func (c *SynchronizedCache[K, V]) Get(ctx context.Context, key K) (*V, bool) {
-	if c.options.Tracer != nil {
+	if (*c.options.Tracer) != nil {
 		spanCtx, span := (*c.options.Tracer).Start(ctx, "synchronized-cache.get", trace.WithAttributes(attribute.String("key", c.options.CacheKey.Marshal(key))))
 		defer span.End()
 		ctx = spanCtx
@@ -99,7 +99,7 @@ func (c *SynchronizedCache[K, V]) Get(ctx context.Context, key K) (*V, bool) {
 }
 
 func (c *SynchronizedCache[K, V]) Ttl(ctx context.Context, key K) (time.Duration, error) {
-	if c.options.Tracer != nil {
+	if (*c.options.Tracer) != nil {
 		_, span := (*c.options.Tracer).Start(ctx, "synchronized-cache.ttl", trace.WithAttributes(attribute.String("key", c.options.CacheKey.Marshal(key))))
 		defer span.End()
 	}
@@ -112,7 +112,7 @@ func (c *SynchronizedCache[K, V]) Ttl(ctx context.Context, key K) (time.Duration
 }
 
 func (c *SynchronizedCache[K, V]) Set(ctx context.Context, key K, value V) error {
-	if c.options.Tracer != nil {
+	if (*c.options.Tracer) != nil {
 		spanCtx, span := (*c.options.Tracer).Start(ctx, "synchronized-cache.set", trace.WithAttributes(attribute.String("key", c.options.CacheKey.Marshal(key))))
 		defer span.End()
 		ctx = spanCtx
@@ -137,7 +137,7 @@ func (c *SynchronizedCache[K, V]) Set(ctx context.Context, key K, value V) error
 }
 
 func (c *SynchronizedCache[K, V]) Remove(ctx context.Context, key K) error {
-	if c.options.Tracer != nil {
+	if (*c.options.Tracer) != nil {
 		spanCtx, span := (*c.options.Tracer).Start(ctx, "synchronized-cache.remove", trace.WithAttributes(attribute.String("key", c.options.CacheKey.Marshal(key))))
 		defer span.End()
 		ctx = spanCtx
@@ -162,7 +162,7 @@ func (c *SynchronizedCache[K, V]) Remove(ctx context.Context, key K) error {
 }
 
 func (c *SynchronizedCache[K, V]) Contains(ctx context.Context, key K) (bool, error) {
-	if c.options.Tracer != nil {
+	if (*c.options.Tracer) != nil {
 		spanCtx, span := (*c.options.Tracer).Start(ctx, "synchronized-cache.contains", trace.WithAttributes(attribute.String("key", c.options.CacheKey.Marshal(key))))
 		defer span.End()
 		ctx = spanCtx
