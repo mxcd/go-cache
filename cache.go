@@ -14,11 +14,13 @@ type CacheEventType int
 const (
 	CacheEventSet CacheEventType = iota
 	CacheEventRemove
+	CacheEventRemovePrefix
 )
 
 type CacheEvent[K comparable, V any] struct {
-	Entry *CacheEntry[K, V]
-	Type  CacheEventType
+	Entry     *CacheEntry[K, V]
+	Type      CacheEventType
+	KeyPrefix string
 }
 
 // type Cache[K, V any] interface {

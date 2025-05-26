@@ -130,3 +130,90 @@ func TestRedisPubSub(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, "buzz", localItemsOneValue)
 }
+
+func TestRedisRemovePrefix(t *testing.T) {
+
+	s := miniredis.RunT(t)
+	defer s.Close()
+
+	cache, err := NewRedisStorageBackend[string, string](&RedisStorageBackendOptions[string]{
+		RedisOptions: &redis.Options{
+			Addr: s.Addr(),
+		},
+		KeyPrefix: "test",
+		TTL:       0,
+		CacheKey:  &StringCacheKey{},
+	})
+	assert.Nil(t, err)
+
+	ctx := context.Background()
+
+	// add value
+	err = cache.Set(ctx, "foo:fizz", "bar")
+	assert.Nil(t, err)
+	redisValue, err := s.Get("test:foo:fizz")
+	assert.Nil(t, err)
+	assert.Equal(t, "bar", unmarshalTestData[string](t, redisValue))
+
+	// add another value
+	err = cache.Set(ctx, "foo:buzz", "fizz")
+	assert.Nil(t, err)
+	redisValue, err = s.Get("test:foo:buzz")
+	assert.Nil(t, err)
+	assert.Equal(t, "fizz", unmarshalTestData[string](t, redisValue))
+
+	// check size
+	size := len(s.Keys())
+	assert.Equal(t, 2, size)
+
+	// add more values with different prefix
+	err = cache.Set(ctx, "bar:fizz", "buzz")
+	assert.Nil(t, err)
+	redisValue, err = s.Get("test:bar:fizz")
+	assert.Nil(t, err)
+	assert.Equal(t, "buzz", unmarshalTestData[string](t, redisValue))
+
+	// add another value with different prefix
+	err = cache.Set(ctx, "bar:buzz", "foo")
+	assert.Nil(t, err)
+	redisValue, err = s.Get("test:bar:buzz")
+	assert.Nil(t, err)
+	assert.Equal(t, "foo", unmarshalTestData[string](t, redisValue))
+
+	// check size again
+	size = len(s.Keys())
+	assert.Equal(t, 4, size)
+
+	// remove prefix "foo"
+	err = cache.RemovePrefix(ctx, "foo")
+	assert.Nil(t, err)
+
+	// check if size is reduced
+	size = len(s.Keys())
+	assert.Equal(t, 2, size)
+
+	// check if values with prefix "foo" are removed
+	redisValue, err = s.Get("test:foo:fizz")
+	assert.NotNil(t, err)
+	assert.Empty(t, redisValue)
+	redisValue, err = s.Get("test:foo:buzz")
+	assert.NotNil(t, err)
+	assert.Empty(t, redisValue)
+
+	// remove prefix "bar"
+	err = cache.RemovePrefix(ctx, "bar")
+	assert.Nil(t, err)
+
+	// check if size is reduced again
+	size = len(s.Keys())
+	assert.Equal(t, 0, size)
+
+	// check if values with prefix "bar" are removed
+	redisValue, err = s.Get("test:bar:fizz")
+	assert.NotNil(t, err)
+	assert.Empty(t, redisValue)
+	redisValue, err = s.Get("test:bar:buzz")
+	assert.NotNil(t, err)
+	assert.Empty(t, redisValue)
+
+}

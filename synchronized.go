@@ -57,6 +57,8 @@ func NewSynchronizedCache[K comparable, V any](options *SynchronizedCacheOptions
 			local.Set(event.Entry.Key, *event.Entry.Value)
 		case CacheEventRemove:
 			local.Remove(event.Entry.Key)
+		case CacheEventRemovePrefix:
+			local.RemovePrefix(event.KeyPrefix)
 		}
 	})
 
@@ -146,6 +148,31 @@ func (c *SynchronizedCache[K, V]) Remove(ctx context.Context, key K) error {
 
 	removeRemote := func(ctx context.Context) error {
 		return c.remote.Remove(ctx, key)
+	}
+
+	if c.options.RemoteAsync {
+		ctx := deriveAsyncContext(ctx)
+		go removeRemote(ctx)
+	} else {
+		err := removeRemote(ctx)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (c *SynchronizedCache[K, V]) RemovePrefix(ctx context.Context, prefix string) error {
+	if c.options.Tracer != nil && (*c.options.Tracer) != nil {
+		spanCtx, span := (*c.options.Tracer).Start(ctx, "synchronized-cache.remove-prefix", trace.WithAttributes(attribute.String("prefix", prefix)))
+		defer span.End()
+		ctx = spanCtx
+	}
+	c.local.RemovePrefix(prefix)
+
+	removeRemote := func(ctx context.Context) error {
+		return c.remote.RemovePrefix(ctx, prefix)
 	}
 
 	if c.options.RemoteAsync {
