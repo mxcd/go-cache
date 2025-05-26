@@ -95,3 +95,35 @@ func TestLocalCacheLoad(t *testing.T) {
 	assert.Equal(t, "fizz", values[1].Key)
 	assert.Equal(t, "buzz", *values[1].Value)
 }
+
+func TestLocalCacheRemovePrefix(t *testing.T) {
+	cache := NewLocalCache[string, string](&LocalCacheOptions[string]{
+		TTL:      0,
+		Size:     0,
+		CacheKey: &StringCacheKey{},
+	})
+	assert.NotNil(t, cache)
+
+	cache.Set("foo:bar", "baz")
+	cache.Set("foo:baz", "qux")
+	cache.Set("fizz:buzz", "fizzbuzz")
+	cache.Set("fizz:qux", "fizzqux")
+	cache.Set("qux:foo", "quxbar")
+	cache.Set("qux:baz", "quxbaz")
+	assert.Len(t, cache.Cache.Keys(), 6)
+	cache.RemovePrefix("foo")
+
+	assert.Len(t, cache.Cache.Keys(), 4)
+	assert.False(t, cache.Contains("foo:bar"))
+	assert.False(t, cache.Contains("foo:baz"))
+
+	cache.RemovePrefix("fizz")
+	assert.Len(t, cache.Cache.Keys(), 2)
+	assert.False(t, cache.Contains("fizz:buzz"))
+	assert.False(t, cache.Contains("fizz:qux"))
+
+	cache.RemovePrefix("qux")
+	assert.Len(t, cache.Cache.Keys(), 0)
+	assert.False(t, cache.Contains("qux:foo"))
+	assert.False(t, cache.Contains("qux:baz"))
+}

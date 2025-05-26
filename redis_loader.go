@@ -31,18 +31,13 @@ func (b *RedisStorageBackend[K, V]) fetchValues(ctx context.Context, keys []stri
 	resultsChan <- keyValues
 }
 
-func (b *RedisStorageBackend[K, V]) fetchKeysWithPrefix(ctx context.Context, prefix string, batchSize int) (map[K]V, error) {
+func (b *RedisStorageBackend[K, V]) fetchEntriesWithPrefix(ctx context.Context, prefix string, batchSize int) (map[K]V, error) {
 	var cursor uint64
 	var err error
 	resultsChan := make(chan map[string]V)
 	var wg sync.WaitGroup
 
-	keyPrefix := ""
-	if prefix != "" {
-		keyPrefix = fmt.Sprintf("%s:", prefix)
-	}
-
-	keyPattern := fmt.Sprintf("%s*", keyPrefix)
+	keyPattern := fmt.Sprintf("%s:%s*", b.Options.KeyPrefix, prefix)
 
 	for {
 		var scanKeys []string
@@ -75,7 +70,7 @@ func (b *RedisStorageBackend[K, V]) fetchKeysWithPrefix(ctx context.Context, pre
 	keys := make(map[K]V)
 	for keyMap := range resultsChan {
 		for key, value := range keyMap {
-			key = strings.TrimPrefix(key, keyPrefix)
+			key = strings.TrimPrefix(key, b.Options.KeyPrefix+":")
 			unmarshalledKey, err := b.Options.CacheKey.Unmarshal(key)
 			if err != nil {
 				fmt.Printf("Error marshalling key %v: %v\n", key, err)
@@ -84,6 +79,44 @@ func (b *RedisStorageBackend[K, V]) fetchKeysWithPrefix(ctx context.Context, pre
 
 			keys[unmarshalledKey] = value
 		}
+	}
+
+	return keys, nil
+}
+
+func (b *RedisStorageBackend[K, V]) fetchKeysWithPrefix(ctx context.Context, prefix string) ([]K, error) {
+	var cursor uint64
+	var err error
+
+	keyPattern := fmt.Sprintf("%s:%s*", b.Options.KeyPrefix, prefix)
+
+	var stringKeys []string
+
+	for {
+		var scanKeys []string
+		scanKeys, cursor, err = b.Client.Scan(ctx, cursor, keyPattern, 0).Result()
+		if err != nil {
+			return nil, err
+		}
+
+		stringKeys = append(stringKeys, scanKeys...)
+
+		if cursor == 0 {
+			break
+		}
+	}
+
+	keys := []K{}
+
+	for _, key := range stringKeys {
+		key = strings.TrimPrefix(key, b.Options.KeyPrefix+":")
+		unmarshalledKey, err := b.Options.CacheKey.Unmarshal(key)
+		if err != nil {
+			fmt.Printf("Error marshalling key %v: %v\n", key, err)
+			continue
+		}
+
+		keys = append(keys, unmarshalledKey)
 	}
 
 	return keys, nil

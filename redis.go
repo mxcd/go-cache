@@ -92,12 +92,48 @@ func (b *RedisStorageBackend[K, V]) Remove(ctx context.Context, key K) error {
 	return nil
 }
 
+func (b *RedisStorageBackend[K, V]) RemovePrefix(ctx context.Context, keyPrefix string) error {
+	keys, err := b.fetchKeysWithPrefix(ctx, keyPrefix)
+	if err != nil {
+		return err
+	}
+
+	for i := 0; i < len(keys); i += 1000 {
+		end := i + 1000
+		if end > len(keys) {
+			end = len(keys)
+		}
+
+		batchKeys := make([]string, end-i)
+		for j, key := range keys[i:end] {
+			batchKeys[j] = b.GetStringKey(key)
+		}
+
+		err = b.Client.Del(ctx, batchKeys...).Err()
+		if err != nil {
+			return err
+		}
+	}
+
+	if b.Options.PubSub {
+		err = b.PublishEvent(ctx, &CacheEvent[K, V]{
+			Type:      CacheEventRemovePrefix,
+			KeyPrefix: keyPrefix,
+		})
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func (b *RedisStorageBackend[K, V]) Contains(ctx context.Context, key K) (bool, error) {
 	return b.Client.Exists(ctx, b.GetStringKey(key)).Val() == 1, nil
 }
 
 func (b *RedisStorageBackend[K, V]) Load(ctx context.Context) ([]CacheEntry[K, V], error) {
-	data, err := b.fetchKeysWithPrefix(ctx, b.Options.KeyPrefix, 100)
+	data, err := b.fetchEntriesWithPrefix(ctx, "", 100)
 	if err != nil {
 		return nil, err
 	}

@@ -64,6 +64,15 @@ func (c *LocalCache[K, V]) Remove(key K) bool {
 	return c.Cache.Remove(c.Options.CacheKey.Marshal(key))
 }
 
+func (c *LocalCache[K, V]) RemovePrefix(prefix string) {
+	keys := c.Cache.Keys()
+	for _, key := range keys {
+		if len(key) >= len(prefix) && key[:len(prefix)] == prefix {
+			c.Cache.Remove(key)
+		}
+	}
+}
+
 func (c *LocalCache[K, V]) Contains(key K) bool {
 	return c.Cache.Contains(c.Options.CacheKey.Marshal(key))
 }
