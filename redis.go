@@ -169,6 +169,14 @@ type RedisStorageBackendOptions[K comparable] struct {
 	KeyPrefix         string
 	PubSub            bool
 	PubSubChannelName string
+	ScanCount int64
+}
+
+func (o *RedisStorageBackendOptions[K]) GetScanCount() int64 {
+	if o.ScanCount <= 0 {
+		return 0
+	}
+	return o.ScanCount
 }
 
 func NewRedisStorageBackend[K comparable, V any](options *RedisStorageBackendOptions[K]) (*RedisStorageBackend[K, V], error) {

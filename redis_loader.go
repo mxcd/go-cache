@@ -41,7 +41,7 @@ func (b *RedisStorageBackend[K, V]) fetchEntriesWithPrefix(ctx context.Context, 
 
 	for {
 		var scanKeys []string
-		scanKeys, cursor, err = b.Client.Scan(ctx, cursor, keyPattern, 0).Result()
+		scanKeys, cursor, err = b.Client.Scan(ctx, cursor, keyPattern, b.Options.GetScanCount()).Result()
 		if err != nil {
 			close(resultsChan)
 			return nil, err
@@ -94,7 +94,7 @@ func (b *RedisStorageBackend[K, V]) fetchKeysWithPrefix(ctx context.Context, pre
 
 	for {
 		var scanKeys []string
-		scanKeys, cursor, err = b.Client.Scan(ctx, cursor, keyPattern, 0).Result()
+		scanKeys, cursor, err = b.Client.Scan(ctx, cursor, keyPattern, b.Options.GetScanCount()).Result()
 		if err != nil {
 			return nil, err
 		}
