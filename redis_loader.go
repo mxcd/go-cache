@@ -2,52 +2,71 @@ package cache
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 
+	"github.com/redis/go-redis/v9"
 	"github.com/vmihailenco/msgpack/v5"
 )
+
+func escapeRedisPattern(s string) string {
+	var b strings.Builder
+	for _, c := range s {
+		switch c {
+		case '*', '?', '[', ']', '\\':
+			b.WriteRune('\\')
+		}
+		b.WriteRune(c)
+	}
+	return b.String()
+}
 
 func (b *RedisStorageBackend[K, V]) fetchValues(ctx context.Context, keys []string, resultsChan chan<- map[string]V, wg *sync.WaitGroup) {
 	defer wg.Done()
 	keyValues := make(map[string]V)
 	for _, key := range keys {
 		value, err := b.Client.Get(ctx, key).Bytes()
-
 		if err != nil {
-			fmt.Printf("Error fetching value for key %s: %v\n", key, err)
+			if err == redis.Nil {
+				continue
+			}
+			log.Printf("go-cache: error fetching value for key %s: %v", key, err)
 			continue
 		}
 
 		var unmarshalledValue V
 		err = msgpack.Unmarshal(value, &unmarshalledValue)
-		if err == nil {
-			keyValues[key] = unmarshalledValue
-		} else {
-			fmt.Printf("Error unmarshalling value for key %s: %v\n", key, err)
+		if err != nil {
+			log.Printf("go-cache: error unmarshalling value for key %s: %v", key, err)
+			continue
 		}
+		keyValues[key] = unmarshalledValue
 	}
 	resultsChan <- keyValues
 }
 
 func (b *RedisStorageBackend[K, V]) fetchEntriesWithPrefix(ctx context.Context, prefix string, batchSize int) (map[K]V, error) {
+	if batchSize <= 0 {
+		return nil, errors.New("batchSize must be positive")
+	}
+
 	var cursor uint64
-	var err error
 	resultsChan := make(chan map[string]V)
 	var wg sync.WaitGroup
+	var scanErr error
 
-	keyPattern := fmt.Sprintf("%s:%s*", b.Options.KeyPrefix, prefix)
+	keyPattern := fmt.Sprintf("%s:%s*", b.Options.KeyPrefix, escapeRedisPattern(prefix))
 
 	for {
 		var scanKeys []string
-		scanKeys, cursor, err = b.Client.Scan(ctx, cursor, keyPattern, b.Options.GetScanCount()).Result()
-		if err != nil {
-			close(resultsChan)
-			return nil, err
+		scanKeys, cursor, scanErr = b.Client.Scan(ctx, cursor, keyPattern, b.Options.GetScanCount()).Result()
+		if scanErr != nil {
+			break
 		}
 
-		// Process the keys in batches.
 		for i := 0; i < len(scanKeys); i += batchSize {
 			end := i + batchSize
 			if end > len(scanKeys) {
@@ -73,12 +92,16 @@ func (b *RedisStorageBackend[K, V]) fetchEntriesWithPrefix(ctx context.Context, 
 			key = strings.TrimPrefix(key, b.Options.KeyPrefix+":")
 			unmarshalledKey, err := b.Options.CacheKey.Unmarshal(key)
 			if err != nil {
-				fmt.Printf("Error marshalling key %v: %v\n", key, err)
+				log.Printf("go-cache: error unmarshalling key %v: %v", key, err)
 				continue
 			}
 
 			keys[unmarshalledKey] = value
 		}
+	}
+
+	if scanErr != nil {
+		return nil, scanErr
 	}
 
 	return keys, nil
@@ -88,7 +111,7 @@ func (b *RedisStorageBackend[K, V]) fetchKeysWithPrefix(ctx context.Context, pre
 	var cursor uint64
 	var err error
 
-	keyPattern := fmt.Sprintf("%s:%s*", b.Options.KeyPrefix, prefix)
+	keyPattern := fmt.Sprintf("%s:%s*", b.Options.KeyPrefix, escapeRedisPattern(prefix))
 
 	var stringKeys []string
 
@@ -112,7 +135,7 @@ func (b *RedisStorageBackend[K, V]) fetchKeysWithPrefix(ctx context.Context, pre
 		key = strings.TrimPrefix(key, b.Options.KeyPrefix+":")
 		unmarshalledKey, err := b.Options.CacheKey.Unmarshal(key)
 		if err != nil {
-			fmt.Printf("Error marshalling key %v: %v\n", key, err)
+			log.Printf("go-cache: error unmarshalling key %v: %v", key, err)
 			continue
 		}
 

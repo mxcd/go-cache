@@ -29,6 +29,7 @@ func TestSynchronized(t *testing.T) {
 		CacheKey:          &StringCacheKey{},
 	})
 	assert.Nil(t, err)
+	defer storageBackendOne.Close()
 
 	synchronizedCacheOne, err := NewSynchronizedCache[string, string](&SynchronizedCacheOptions[string, string]{
 		LocalTTL:       0,
@@ -58,6 +59,7 @@ func TestSynchronized(t *testing.T) {
 		CacheKey:          &StringCacheKey{},
 	})
 	assert.Nil(t, err)
+	defer storageBackendTwo.Close()
 
 	synchronizedCacheTwo, err := NewSynchronizedCache[string, string](&SynchronizedCacheOptions[string, string]{
 		LocalTTL:       0,
@@ -118,6 +120,7 @@ func TestSynchronizedRemovePrefix(t *testing.T) {
 		CacheKey:          &StringCacheKey{},
 	})
 	assert.Nil(t, err)
+	defer backend.Close()
 
 	cache, err := NewSynchronizedCache[string, string](&SynchronizedCacheOptions[string, string]{
 		LocalTTL:       0,
@@ -180,6 +183,7 @@ func TestSynchronizedGet(t *testing.T) {
 		CacheKey:          &StringCacheKey{},
 	})
 	assert.Nil(t, err)
+	defer backend.Close()
 
 	cache, err := NewSynchronizedCache[string, string](&SynchronizedCacheOptions[string, string]{
 		LocalTTL:       0,
@@ -261,6 +265,7 @@ func TestSynchronizedRemove(t *testing.T) {
 		CacheKey:          &StringCacheKey{},
 	})
 	assert.Nil(t, err)
+	defer backend.Close()
 
 	cache, err := NewSynchronizedCache[string, string](&SynchronizedCacheOptions[string, string]{
 		LocalTTL:       0,
@@ -310,6 +315,7 @@ func TestSynchronizedContains(t *testing.T) {
 		CacheKey:          &StringCacheKey{},
 	})
 	assert.Nil(t, err)
+	defer backend.Close()
 
 	cache, err := NewSynchronizedCache[string, string](&SynchronizedCacheOptions[string, string]{
 		LocalTTL:       0,
@@ -354,6 +360,7 @@ func TestSynchronizedSetAsync(t *testing.T) {
 		CacheKey:          &StringCacheKey{},
 	})
 	assert.Nil(t, err)
+	defer backend.Close()
 
 	cache, err := NewSynchronizedCache[string, string](&SynchronizedCacheOptions[string, string]{
 		LocalTTL:       0,
@@ -394,6 +401,7 @@ func TestSynchronizedRemoveAsync(t *testing.T) {
 		CacheKey:          &StringCacheKey{},
 	})
 	assert.Nil(t, err)
+	defer backend.Close()
 
 	cache, err := NewSynchronizedCache[string, string](&SynchronizedCacheOptions[string, string]{
 		LocalTTL:       0,
@@ -438,6 +446,7 @@ func TestSynchronizedRemovePrefixAsync(t *testing.T) {
 		CacheKey:          &StringCacheKey{},
 	})
 	assert.Nil(t, err)
+	defer backend.Close()
 
 	cache, err := NewSynchronizedCache[string, string](&SynchronizedCacheOptions[string, string]{
 		LocalTTL:       0,
@@ -475,8 +484,8 @@ func TestSynchronizedRemovePrefixAsync(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, "3", *val)
 
-	// Remote may need a moment
-	time.Sleep(20 * time.Millisecond)
+	// Remote may need a moment for async remove
+	time.Sleep(100 * time.Millisecond)
 	assert.False(t, s.Exists("test:pfx:a"))
 	assert.False(t, s.Exists("test:pfx:b"))
 	assert.True(t, s.Exists("test:other:c"))

@@ -23,6 +23,7 @@ type SynchronizedCacheOptions[K comparable, V any] struct {
 	RemoteAsync    bool
 	Preload        bool
 	Tracer         *trace.Tracer
+	AsyncTimeout   time.Duration
 }
 
 // func (o *SynchronizedCacheOptions) GetLocalTTL() time.Duration {
@@ -123,24 +124,26 @@ func (c *SynchronizedCache[K, V]) Set(ctx context.Context, key K, value V) error
 		defer span.End()
 		ctx = spanCtx
 	}
-	c.local.Set(key, value)
 
 	setRemote := func(ctx context.Context) error {
 		return c.remote.Set(ctx, key, value)
 	}
 
 	if c.options.RemoteAsync {
-		ctx := deriveAsyncContext(ctx)
+		c.local.Set(key, value)
+		asyncCtx, cancel := c.deriveAsyncContext(ctx)
 		go func() {
-			if err := setRemote(ctx); err != nil {
+			defer cancel()
+			if err := setRemote(asyncCtx); err != nil {
 				log.Printf("go-cache: async remote set failed: %s", err)
+				c.local.Remove(key)
 			}
 		}()
 	} else {
-		err := setRemote(ctx)
-		if err != nil {
+		if err := setRemote(ctx); err != nil {
 			return err
 		}
+		c.local.Set(key, value)
 	}
 
 	return nil
@@ -152,24 +155,25 @@ func (c *SynchronizedCache[K, V]) Remove(ctx context.Context, key K) error {
 		defer span.End()
 		ctx = spanCtx
 	}
-	c.local.Remove(key)
 
 	removeRemote := func(ctx context.Context) error {
 		return c.remote.Remove(ctx, key)
 	}
 
 	if c.options.RemoteAsync {
-		ctx := deriveAsyncContext(ctx)
+		c.local.Remove(key)
+		asyncCtx, cancel := c.deriveAsyncContext(ctx)
 		go func() {
-			if err := removeRemote(ctx); err != nil {
+			defer cancel()
+			if err := removeRemote(asyncCtx); err != nil {
 				log.Printf("go-cache: async remote remove failed: %s", err)
 			}
 		}()
 	} else {
-		err := removeRemote(ctx)
-		if err != nil {
+		if err := removeRemote(ctx); err != nil {
 			return err
 		}
+		c.local.Remove(key)
 	}
 
 	return nil
@@ -181,24 +185,25 @@ func (c *SynchronizedCache[K, V]) RemovePrefix(ctx context.Context, prefix strin
 		defer span.End()
 		ctx = spanCtx
 	}
-	c.local.RemovePrefix(prefix)
 
 	removeRemote := func(ctx context.Context) error {
 		return c.remote.RemovePrefix(ctx, prefix)
 	}
 
 	if c.options.RemoteAsync {
-		ctx := deriveAsyncContext(ctx)
+		c.local.RemovePrefix(prefix)
+		asyncCtx, cancel := c.deriveAsyncContext(ctx)
 		go func() {
-			if err := removeRemote(ctx); err != nil {
+			defer cancel()
+			if err := removeRemote(asyncCtx); err != nil {
 				log.Printf("go-cache: async remote remove-prefix failed: %s", err)
 			}
 		}()
 	} else {
-		err := removeRemote(ctx)
-		if err != nil {
+		if err := removeRemote(ctx); err != nil {
 			return err
 		}
+		c.local.RemovePrefix(prefix)
 	}
 
 	return nil
@@ -222,7 +227,7 @@ func (c *SynchronizedCache[K, V]) Contains(ctx context.Context, key K) (bool, er
 	return ok, nil
 }
 
-func deriveAsyncContext(ctx context.Context) context.Context {
+func (c *SynchronizedCache[K, V]) deriveAsyncContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	asyncCtx := context.Background()
 
 	span := trace.SpanFromContext(ctx)
@@ -230,5 +235,9 @@ func deriveAsyncContext(ctx context.Context) context.Context {
 		asyncCtx = trace.ContextWithSpan(asyncCtx, span)
 	}
 
-	return asyncCtx
+	if c.options.AsyncTimeout > 0 {
+		return context.WithTimeout(asyncCtx, c.options.AsyncTimeout)
+	}
+
+	return asyncCtx, func() {}
 }

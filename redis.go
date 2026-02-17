@@ -18,6 +18,7 @@ type RedisStorageBackend[K comparable, V any] struct {
 	callbacks    []func(CacheEvent[K, V])
 	callbacksMu  sync.RWMutex
 	cancelPubSub context.CancelFunc
+	pubSubWg     sync.WaitGroup
 }
 
 func (b *RedisStorageBackend[K, V]) GetStringKey(key K) string {
@@ -101,6 +102,7 @@ func (b *RedisStorageBackend[K, V]) RemovePrefix(ctx context.Context, keyPrefix 
 		return err
 	}
 
+	var errs []error
 	for i := 0; i < len(keys); i += 1000 {
 		end := i + 1000
 		if end > len(keys) {
@@ -112,10 +114,13 @@ func (b *RedisStorageBackend[K, V]) RemovePrefix(ctx context.Context, keyPrefix 
 			batchKeys[j] = b.GetStringKey(key)
 		}
 
-		err = b.Client.Del(ctx, batchKeys...).Err()
-		if err != nil {
-			return err
+		if err := b.Client.Del(ctx, batchKeys...).Err(); err != nil {
+			errs = append(errs, err)
 		}
+	}
+
+	if err := errors.Join(errs...); err != nil {
+		return err
 	}
 
 	if b.Options.PubSub {
@@ -188,52 +193,77 @@ func NewRedisStorageBackend[K comparable, V any](options *RedisStorageBackendOpt
 	client := redis.NewClient(options.RedisOptions)
 
 	if err := redisotel.InstrumentTracing(client); err != nil {
+		client.Close()
 		return nil, err
 	}
 
 	if err := redisotel.InstrumentMetrics(client); err != nil {
+		client.Close()
 		return nil, err
 	}
 
 	if options.PubSub && options.PubSubChannelName == "" {
+		client.Close()
 		return nil, errors.New("PubSubChannelName is required when PubSub is enabled")
 	}
 
 	b := &RedisStorageBackend[K, V]{
-		Options:  options,
-		Client:   client,
+		Options: options,
+		Client:  client,
 	}
 
 	if b.Options.PubSub {
 		ctx, cancel := context.WithCancel(context.Background())
 		b.cancelPubSub = cancel
 
+		b.pubSubWg.Add(1)
 		go func() {
-			pubsub := b.Client.Subscribe(ctx, b.Options.PubSubChannelName)
-			defer pubsub.Close()
+			defer b.pubSubWg.Done()
+			backoff := 100 * time.Millisecond
+			maxBackoff := 10 * time.Second
 
 			for {
-				msg, err := pubsub.ReceiveMessage(ctx)
-				if err != nil {
-					if ctx.Err() != nil {
-						return
+				if ctx.Err() != nil {
+					return
+				}
+
+				pubsub := b.Client.Subscribe(ctx, b.Options.PubSubChannelName)
+				for {
+					msg, err := pubsub.ReceiveMessage(ctx)
+					if err != nil {
+						if ctx.Err() != nil {
+							pubsub.Close()
+							return
+						}
+						log.Printf("go-cache: pubsub error, reconnecting: %s", err)
+						break
 					}
-					log.Printf("error receiving cache event message: %s", err.Error())
-					continue
-				}
 
-				var entry CacheEvent[K, V]
-				err = msgpack.Unmarshal([]byte(msg.Payload), &entry)
-				if err != nil {
-					log.Printf("error unmarshalling cache event message: %s", err.Error())
-					continue
-				}
+					backoff = 100 * time.Millisecond
 
-				b.callbacksMu.RLock()
-				for _, callback := range b.callbacks {
-					callback(entry)
+					var entry CacheEvent[K, V]
+					err = msgpack.Unmarshal([]byte(msg.Payload), &entry)
+					if err != nil {
+						log.Printf("go-cache: error unmarshalling cache event message: %s", err)
+						continue
+					}
+
+					b.callbacksMu.RLock()
+					for _, callback := range b.callbacks {
+						callback(entry)
+					}
+					b.callbacksMu.RUnlock()
 				}
-				b.callbacksMu.RUnlock()
+				pubsub.Close()
+
+				select {
+				case <-time.After(backoff):
+					if backoff < maxBackoff {
+						backoff *= 2
+					}
+				case <-ctx.Done():
+					return
+				}
 			}
 		}()
 	}
@@ -245,5 +275,9 @@ func (b *RedisStorageBackend[K, V]) Close() error {
 	if b.cancelPubSub != nil {
 		b.cancelPubSub()
 	}
-	return b.Client.Close()
+	// Close client to unblock any TCP reads in the PubSub goroutine,
+	// then wait for the goroutine to finish.
+	err := b.Client.Close()
+	b.pubSubWg.Wait()
+	return err
 }
