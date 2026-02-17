@@ -93,6 +93,7 @@ func TestRedisPubSub(t *testing.T) {
 		CacheKey:          &StringCacheKey{},
 	})
 	assert.Nil(t, err)
+	defer cacheOne.Close()
 	addCallback(cacheOne, localItemsOne)
 
 	cacheTwo, err := NewRedisStorageBackend[string, string](&RedisStorageBackendOptions[string]{
@@ -106,6 +107,7 @@ func TestRedisPubSub(t *testing.T) {
 		CacheKey:          &StringCacheKey{},
 	})
 	assert.Nil(t, err)
+	defer cacheTwo.Close()
 	addCallback(cacheTwo, localItemsTwo)
 
 	err = cacheOne.Set(ctx, "foo", "bar")
@@ -216,4 +218,167 @@ func TestRedisRemovePrefix(t *testing.T) {
 	assert.NotNil(t, err)
 	assert.Empty(t, redisValue)
 
+}
+
+func TestRedisRemove(t *testing.T) {
+	s := miniredis.RunT(t)
+	defer s.Close()
+
+	cache, err := NewRedisStorageBackend[string, string](&RedisStorageBackendOptions[string]{
+		RedisOptions: &redis.Options{
+			Addr: s.Addr(),
+		},
+		KeyPrefix: "test",
+		TTL:       0,
+		CacheKey:  &StringCacheKey{},
+	})
+	assert.Nil(t, err)
+
+	ctx := context.Background()
+
+	err = cache.Set(ctx, "foo", "bar")
+	assert.Nil(t, err)
+
+	ok, err := cache.Contains(ctx, "foo")
+	assert.Nil(t, err)
+	assert.True(t, ok)
+
+	err = cache.Remove(ctx, "foo")
+	assert.Nil(t, err)
+
+	ok, err = cache.Contains(ctx, "foo")
+	assert.Nil(t, err)
+	assert.False(t, ok)
+
+	assert.False(t, s.Exists("test:foo"))
+}
+
+func TestRedisRemoveWithPubSub(t *testing.T) {
+	s := miniredis.RunT(t)
+	defer s.Close()
+
+	cache, err := NewRedisStorageBackend[string, string](&RedisStorageBackendOptions[string]{
+		RedisOptions: &redis.Options{
+			Addr: s.Addr(),
+		},
+		KeyPrefix:         "test",
+		PubSub:            true,
+		PubSubChannelName: "pubsub",
+		TTL:               0,
+		CacheKey:          &StringCacheKey{},
+	})
+	assert.Nil(t, err)
+	defer cache.Close()
+
+	mu := &sync.Mutex{}
+	var removedKey string
+	cache.AddCallback(func(event CacheEvent[string, string]) {
+		mu.Lock()
+		defer mu.Unlock()
+		if event.Type == CacheEventRemove {
+			removedKey = event.Entry.Key
+		}
+	})
+
+	ctx := context.Background()
+	err = cache.Set(ctx, "foo", "bar")
+	assert.Nil(t, err)
+
+	err = cache.Remove(ctx, "foo")
+	assert.Nil(t, err)
+
+	time.Sleep(10 * time.Millisecond)
+
+	mu.Lock()
+	assert.Equal(t, "foo", removedKey)
+	mu.Unlock()
+}
+
+func TestRedisTtl(t *testing.T) {
+	s := miniredis.RunT(t)
+	defer s.Close()
+
+	cache, err := NewRedisStorageBackend[string, string](&RedisStorageBackendOptions[string]{
+		RedisOptions: &redis.Options{
+			Addr: s.Addr(),
+		},
+		KeyPrefix: "test",
+		TTL:       10 * time.Second,
+		CacheKey:  &StringCacheKey{},
+	})
+	assert.Nil(t, err)
+
+	ctx := context.Background()
+	err = cache.Set(ctx, "foo", "bar")
+	assert.Nil(t, err)
+
+	ttl, err := cache.Ttl(ctx, "foo")
+	assert.Nil(t, err)
+	assert.True(t, ttl > 0 && ttl <= 10*time.Second)
+}
+
+func TestRedisClose(t *testing.T) {
+	s := miniredis.RunT(t)
+	defer s.Close()
+
+	cache, err := NewRedisStorageBackend[string, string](&RedisStorageBackendOptions[string]{
+		RedisOptions: &redis.Options{
+			Addr: s.Addr(),
+		},
+		KeyPrefix:         "test",
+		PubSub:            true,
+		PubSubChannelName: "pubsub",
+		TTL:               0,
+		CacheKey:          &StringCacheKey{},
+	})
+	assert.Nil(t, err)
+
+	err = cache.Close()
+	assert.Nil(t, err)
+}
+
+func TestRedisGetScanCount(t *testing.T) {
+	opts := &RedisStorageBackendOptions[string]{
+		CacheKey:  &StringCacheKey{},
+		ScanCount: 500,
+	}
+	assert.Equal(t, int64(500), opts.GetScanCount())
+
+	opts.ScanCount = 0
+	assert.Equal(t, int64(0), opts.GetScanCount())
+
+	opts.ScanCount = -1
+	assert.Equal(t, int64(0), opts.GetScanCount())
+}
+
+func TestRedisGetStringKeyNoPrefix(t *testing.T) {
+	s := miniredis.RunT(t)
+	defer s.Close()
+
+	cache, err := NewRedisStorageBackend[string, string](&RedisStorageBackendOptions[string]{
+		RedisOptions: &redis.Options{
+			Addr: s.Addr(),
+		},
+		KeyPrefix: "",
+		TTL:       0,
+		CacheKey:  &StringCacheKey{},
+	})
+	assert.Nil(t, err)
+
+	assert.Equal(t, "mykey", cache.GetStringKey("mykey"))
+}
+
+func TestRedisNewBackendPubSubNoChannel(t *testing.T) {
+	s := miniredis.RunT(t)
+	defer s.Close()
+
+	_, err := NewRedisStorageBackend[string, string](&RedisStorageBackendOptions[string]{
+		RedisOptions: &redis.Options{
+			Addr: s.Addr(),
+		},
+		PubSub:            true,
+		PubSubChannelName: "",
+		CacheKey:          &StringCacheKey{},
+	})
+	assert.NotNil(t, err)
 }

@@ -2,6 +2,7 @@ package cache
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -126,4 +127,33 @@ func TestLocalCacheRemovePrefix(t *testing.T) {
 	assert.Len(t, cache.Cache.Keys(), 0)
 	assert.False(t, cache.Contains("qux:foo"))
 	assert.False(t, cache.Contains("qux:baz"))
+}
+
+func TestLocalCacheOptionsAccessors(t *testing.T) {
+	ck := &StringCacheKey{}
+	opts := &LocalCacheOptions[string]{
+		TTL:      5 * time.Second,
+		Size:     100,
+		CacheKey: ck,
+	}
+
+	assert.Equal(t, 5*time.Second, opts.GetTtl())
+	assert.Equal(t, 100, opts.GetSize())
+	assert.Equal(t, ck, opts.GetCacheKey())
+}
+
+func TestLocalCacheContains(t *testing.T) {
+	cache := NewLocalCache[string, string](&LocalCacheOptions[string]{
+		TTL:      0,
+		Size:     0,
+		CacheKey: &StringCacheKey{},
+	})
+
+	assert.False(t, cache.Contains("missing"))
+
+	cache.Set("present", "value")
+	assert.True(t, cache.Contains("present"))
+
+	cache.Remove("present")
+	assert.False(t, cache.Contains("present"))
 }
