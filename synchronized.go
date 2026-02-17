@@ -2,6 +2,7 @@ package cache
 
 import (
 	"context"
+	"log"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -95,6 +96,9 @@ func (c *SynchronizedCache[K, V]) Get(ctx context.Context, key K) (*V, bool) {
 	if err != nil {
 		return nil, false
 	}
+	if value == nil {
+		return nil, false
+	}
 
 	c.local.Set(key, *value)
 	return value, true
@@ -127,7 +131,11 @@ func (c *SynchronizedCache[K, V]) Set(ctx context.Context, key K, value V) error
 
 	if c.options.RemoteAsync {
 		ctx := deriveAsyncContext(ctx)
-		go setRemote(ctx)
+		go func() {
+			if err := setRemote(ctx); err != nil {
+				log.Printf("go-cache: async remote set failed: %s", err)
+			}
+		}()
 	} else {
 		err := setRemote(ctx)
 		if err != nil {
@@ -152,7 +160,11 @@ func (c *SynchronizedCache[K, V]) Remove(ctx context.Context, key K) error {
 
 	if c.options.RemoteAsync {
 		ctx := deriveAsyncContext(ctx)
-		go removeRemote(ctx)
+		go func() {
+			if err := removeRemote(ctx); err != nil {
+				log.Printf("go-cache: async remote remove failed: %s", err)
+			}
+		}()
 	} else {
 		err := removeRemote(ctx)
 		if err != nil {
@@ -177,7 +189,11 @@ func (c *SynchronizedCache[K, V]) RemovePrefix(ctx context.Context, prefix strin
 
 	if c.options.RemoteAsync {
 		ctx := deriveAsyncContext(ctx)
-		go removeRemote(ctx)
+		go func() {
+			if err := removeRemote(ctx); err != nil {
+				log.Printf("go-cache: async remote remove-prefix failed: %s", err)
+			}
+		}()
 	} else {
 		err := removeRemote(ctx)
 		if err != nil {

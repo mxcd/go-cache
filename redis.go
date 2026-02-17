@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/extra/redisotel/v9"
@@ -12,9 +13,11 @@ import (
 )
 
 type RedisStorageBackend[K comparable, V any] struct {
-	Options   *RedisStorageBackendOptions[K]
-	Client    *redis.Client
-	Callbacks []func(CacheEvent[K, V])
+	Options      *RedisStorageBackendOptions[K]
+	Client       *redis.Client
+	callbacks    []func(CacheEvent[K, V])
+	callbacksMu  sync.RWMutex
+	cancelPubSub context.CancelFunc
 }
 
 func (b *RedisStorageBackend[K, V]) GetStringKey(key K) string {
@@ -150,7 +153,9 @@ func (b *RedisStorageBackend[K, V]) Load(ctx context.Context) ([]CacheEntry[K, V
 }
 
 func (b *RedisStorageBackend[K, V]) AddCallback(callback func(CacheEvent[K, V])) {
-	b.Callbacks = append(b.Callbacks, callback)
+	b.callbacksMu.Lock()
+	defer b.callbacksMu.Unlock()
+	b.callbacks = append(b.callbacks, callback)
 }
 
 func (b *RedisStorageBackend[K, V]) PublishEvent(ctx context.Context, event *CacheEvent[K, V]) error {
@@ -183,11 +188,11 @@ func NewRedisStorageBackend[K comparable, V any](options *RedisStorageBackendOpt
 	client := redis.NewClient(options.RedisOptions)
 
 	if err := redisotel.InstrumentTracing(client); err != nil {
-		panic(err)
+		return nil, err
 	}
 
 	if err := redisotel.InstrumentMetrics(client); err != nil {
-		panic(err)
+		return nil, err
 	}
 
 	if options.PubSub && options.PubSubChannelName == "" {
@@ -195,19 +200,24 @@ func NewRedisStorageBackend[K comparable, V any](options *RedisStorageBackendOpt
 	}
 
 	b := &RedisStorageBackend[K, V]{
-		Options:   options,
-		Client:    client,
-		Callbacks: []func(CacheEvent[K, V]){},
+		Options:  options,
+		Client:   client,
 	}
 
 	if b.Options.PubSub {
+		ctx, cancel := context.WithCancel(context.Background())
+		b.cancelPubSub = cancel
+
 		go func() {
-			pubsub := b.Client.Subscribe(context.Background(), b.Options.PubSubChannelName)
+			pubsub := b.Client.Subscribe(ctx, b.Options.PubSubChannelName)
 			defer pubsub.Close()
 
 			for {
-				msg, err := pubsub.ReceiveMessage(context.Background())
+				msg, err := pubsub.ReceiveMessage(ctx)
 				if err != nil {
+					if ctx.Err() != nil {
+						return
+					}
 					log.Printf("error receiving cache event message: %s", err.Error())
 					continue
 				}
@@ -219,12 +229,21 @@ func NewRedisStorageBackend[K comparable, V any](options *RedisStorageBackendOpt
 					continue
 				}
 
-				for _, callback := range b.Callbacks {
+				b.callbacksMu.RLock()
+				for _, callback := range b.callbacks {
 					callback(entry)
 				}
+				b.callbacksMu.RUnlock()
 			}
 		}()
 	}
 
 	return b, nil
+}
+
+func (b *RedisStorageBackend[K, V]) Close() error {
+	if b.cancelPubSub != nil {
+		b.cancelPubSub()
+	}
+	return b.Client.Close()
 }
