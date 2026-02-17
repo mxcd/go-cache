@@ -169,7 +169,7 @@ type RedisStorageBackendOptions[K comparable] struct {
 	KeyPrefix         string
 	PubSub            bool
 	PubSubChannelName string
-	ScanCount int64
+	ScanCount         int64
 }
 
 func (o *RedisStorageBackendOptions[K]) GetScanCount() int64 {
