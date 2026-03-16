@@ -1,12 +1,13 @@
 # go-cache
 
-A generic, type-safe caching library for Go with support for local in-memory, Redis-backed, and synchronized two-layer caching.
+A generic, type-safe caching library for Go with support for local in-memory, Redis-backed, and synchronized two-layer caching — plus distributed leader election.
 
 ## Features
 
 - **Local cache** — in-memory LRU cache with optional TTL and size limits
 - **Redis cache** — Redis-backed storage with optional PubSub invalidation and OpenTelemetry tracing
 - **Synchronized cache** — two-layer cache combining local and Redis, with automatic invalidation and optional preloading
+- **Leader election** — distributed leader election via Redis with fencing tokens and optional PubSub fast failover
 - **Generic** — fully typed via Go generics; works with any comparable key and any value type
 - **Custom cache keys** — built-in `StringCacheKey` and `IntCacheKey`, or implement your own
 
@@ -353,6 +354,117 @@ The Redis backend also instruments the underlying Redis client with OpenTelemetr
 | `AsyncTimeout`   | `time.Duration`       | Maximum time for an async background write. `0` means no timeout.                  |
 | `Preload`        | `bool`                | Load all remote entries into local cache on startup.                               |
 | `Tracer`         | `*trace.Tracer`       | Optional OpenTelemetry tracer for span instrumentation.                            |
+
+---
+
+## Leader Election
+
+Distributed leader election using Redis. Uses atomic Lua scripts for lock acquisition, renewal, and release. Provides monotonically increasing fencing tokens to guard against stale leaders. Optionally uses PubSub for fast failover when a leader resigns.
+
+The leader election accepts a `*redis.Client` (not `*redis.Options`) so you can share the same client you already use for caching.
+
+### Basic Usage
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+    "os"
+    "os/signal"
+    "time"
+
+    cache "github.com/mxcd/go-cache"
+    "github.com/redis/go-redis/v9"
+)
+
+func main() {
+    client := redis.NewClient(&redis.Options{
+        Addr: "localhost:6379",
+    })
+    defer client.Close()
+
+    le, err := cache.NewLeaderElection(cache.LeaderElectionOptions{
+        Client:        client,
+        LockKey:       "myapp:leader",
+        LeaseDuration: 10 * time.Second,
+        OnElected: func(ctx context.Context) {
+            fmt.Println("I am the leader now")
+            // ctx is cancelled when leadership is lost — use it to gate leader work
+            <-ctx.Done()
+            fmt.Println("Leadership lost, stopping leader work")
+        },
+        OnDemoted: func() {
+            fmt.Println("No longer the leader")
+        },
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+    defer stop()
+
+    if err := le.Start(ctx); err != nil {
+        log.Fatal(err)
+    }
+
+    <-ctx.Done()
+    le.Stop()
+}
+```
+
+### Fencing Tokens
+
+Every election produces a monotonically increasing epoch. Use it to guard operations that must only be performed by the current leader:
+
+```go
+token := le.FencingToken() // 0 if not leader
+if token > 0 {
+    // pass token to downstream systems so they can reject stale writes
+    processWork(token, payload)
+}
+```
+
+### PubSub Fast Failover
+
+Without PubSub, followers discover a vacant lock on their next retry tick (`RetryInterval`, default `LeaseDuration/2`). With PubSub, the resigning leader announces its departure and followers attempt acquisition immediately (plus a small jitter to avoid thundering herd).
+
+```go
+le, err := cache.NewLeaderElection(cache.LeaderElectionOptions{
+    Client:        client,
+    LockKey:       "myapp:leader",
+    LeaseDuration: 10 * time.Second,
+    PubSubChannel: "myapp:leader:events", // enables fast failover
+    OnElected: func(ctx context.Context) {
+        // ...
+    },
+})
+```
+
+### Options
+
+| Field           | Type                     | Description                                                                                    |
+|-----------------|--------------------------|------------------------------------------------------------------------------------------------|
+| `Client`        | `*redis.Client`          | **Required.** A shared go-redis client.                                                        |
+| `LockKey`       | `string`                 | **Required.** Redis key for the leader lock.                                                   |
+| `LeaseDuration` | `time.Duration`          | **Required.** How long the lock is held before expiry. Recommended 10–15 s.                    |
+| `InstanceID`    | `string`                 | Unique ID for this participant. Generated automatically if empty.                              |
+| `RenewInterval` | `time.Duration`          | How often the leader renews its lease. Default: `LeaseDuration / 3`.                           |
+| `RetryInterval` | `time.Duration`          | How often followers attempt acquisition. Default: `LeaseDuration / 2`.                         |
+| `OnElected`     | `func(context.Context)`  | Called (in a new goroutine) when elected. The context is cancelled when leadership is lost.     |
+| `OnDemoted`     | `func()`                 | Called synchronously when leadership is lost.                                                   |
+| `PubSubChannel` | `string`                 | Redis PubSub channel for fast failover. Empty disables PubSub.                                 |
+
+### How It Works
+
+1. **Acquire** — atomic Lua script: `SET lock NX PX`, `INCR epoch`, overwrite lock with `instanceID:epoch`.
+2. **Renew** — atomic Lua script: verify lock value matches, then `PEXPIRE`.
+3. **Release** — atomic Lua script: verify lock value matches, then `DEL`.
+4. **Failover** — if the leader crashes, the lock expires after `LeaseDuration` and the next follower retry acquires it. With PubSub, graceful resignations trigger near-instant failover.
+5. **Split-brain protection** — after 3 consecutive renewal failures, the leader demotes itself proactively rather than waiting for the lease to expire.
 
 ---
 
