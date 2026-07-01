@@ -3,12 +3,12 @@ package cache
 import (
 	"time"
 
-	"github.com/hashicorp/golang-lru/v2/expirable"
+	"github.com/mxcd/go-cache/lru"
 )
 
 type LocalCache[K comparable, V any] struct {
 	Options  *LocalCacheOptions[K]
-	Cache    *expirable.LRU[string, *CacheEntry[K, V]]
+	Cache    *lru.LRU[string, *CacheEntry[K, V]]
 	CacheKey CacheKey[K]
 }
 
@@ -38,7 +38,7 @@ func NewLocalCache[K comparable, V any](options *LocalCacheOptions[K]) *LocalCac
 	if options.CacheKey == nil {
 		panic("CacheKey must be provided")
 	}
-	cache := expirable.NewLRU[string, *CacheEntry[K, V]](options.Size, nil, options.TTL)
+	cache := lru.NewLRU[string, *CacheEntry[K, V]](options.Size, nil, options.TTL)
 	return &LocalCache[K, V]{
 		Cache:   cache,
 		Options: options,
