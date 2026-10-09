@@ -141,7 +141,11 @@ func (b *RedisStorageBackend[K, V]) RemovePrefix(ctx context.Context, keyPrefix 
 }
 
 func (b *RedisStorageBackend[K, V]) Contains(ctx context.Context, key K) (bool, error) {
-	return b.Client.Exists(ctx, b.GetStringKey(key)).Val() == 1, nil
+	n, err := b.Client.Exists(ctx, b.GetStringKey(key)).Result()
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
 }
 
 func (b *RedisStorageBackend[K, V]) Load(ctx context.Context) ([]CacheEntry[K, V], error) {

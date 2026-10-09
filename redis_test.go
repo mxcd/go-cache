@@ -414,3 +414,25 @@ func TestRedisNoPrefixLoadAndRemovePrefix(t *testing.T) {
 	assert.False(t, s.Exists("foo:fizz"))
 	assert.True(t, s.Exists("bar:fizz"))
 }
+
+func TestRedisContainsPropagatesError(t *testing.T) {
+	s := miniredis.RunT(t)
+
+	cache, err := NewRedisStorageBackend[string, string](&RedisStorageBackendOptions[string]{
+		RedisOptions: &redis.Options{
+			Addr:       s.Addr(),
+			MaxRetries: -1,
+		},
+		KeyPrefix: "test",
+		TTL:       0,
+		CacheKey:  &StringCacheKey{},
+	})
+	assert.Nil(t, err)
+	defer cache.Close()
+
+	s.Close()
+
+	ok, err := cache.Contains(context.Background(), "foo")
+	assert.False(t, ok)
+	assert.NotNil(t, err)
+}
