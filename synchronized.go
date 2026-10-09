@@ -47,17 +47,16 @@ func NewSynchronizedCache[K comparable, V any](options *SynchronizedCacheOptions
 	local := NewLocalCache[K, V](localOptions)
 
 	options.StorageBackend.AddCallback(func(event CacheEvent[K, V]) {
-		if event.Entry == nil {
-			return
-		}
-
 		switch event.Type {
 		case CacheEventSet:
-			if event.Entry.Value == nil {
+			if event.Entry == nil || event.Entry.Value == nil {
 				break
 			}
 			local.Set(event.Entry.Key, *event.Entry.Value)
 		case CacheEventRemove:
+			if event.Entry == nil {
+				break
+			}
 			local.Remove(event.Entry.Key)
 		case CacheEventRemovePrefix:
 			local.RemovePrefix(event.KeyPrefix)
