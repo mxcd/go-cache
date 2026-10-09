@@ -21,12 +21,16 @@ type RedisStorageBackend[K comparable, V any] struct {
 	pubSubWg     sync.WaitGroup
 }
 
-func (b *RedisStorageBackend[K, V]) GetStringKey(key K) string {
+// keyNamespace is prepended to every marshalled key; empty when no KeyPrefix is set.
+func (b *RedisStorageBackend[K, V]) keyNamespace() string {
 	if b.Options.KeyPrefix == "" {
-		return b.Options.CacheKey.Marshal(key)
-	} else {
-		return b.Options.KeyPrefix + ":" + b.Options.CacheKey.Marshal(key)
+		return ""
 	}
+	return b.Options.KeyPrefix + ":"
+}
+
+func (b *RedisStorageBackend[K, V]) GetStringKey(key K) string {
+	return b.keyNamespace() + b.Options.CacheKey.Marshal(key)
 }
 
 func (b *RedisStorageBackend[K, V]) Get(ctx context.Context, key K) (*V, error) {

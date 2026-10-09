@@ -382,3 +382,35 @@ func TestRedisNewBackendPubSubNoChannel(t *testing.T) {
 	})
 	assert.NotNil(t, err)
 }
+
+func TestRedisNoPrefixLoadAndRemovePrefix(t *testing.T) {
+	s := miniredis.RunT(t)
+	defer s.Close()
+
+	cache, err := NewRedisStorageBackend[string, string](&RedisStorageBackendOptions[string]{
+		RedisOptions: &redis.Options{
+			Addr: s.Addr(),
+		},
+		KeyPrefix: "",
+		TTL:       0,
+		CacheKey:  &StringCacheKey{},
+	})
+	assert.Nil(t, err)
+	defer cache.Close()
+
+	ctx := context.Background()
+	assert.Nil(t, cache.Set(ctx, "foo:fizz", "1"))
+	assert.Nil(t, cache.Set(ctx, "bar:fizz", "2"))
+
+	entries, err := cache.Load(ctx)
+	assert.Nil(t, err)
+	loaded := map[string]string{}
+	for _, entry := range entries {
+		loaded[entry.Key] = *entry.Value
+	}
+	assert.Equal(t, map[string]string{"foo:fizz": "1", "bar:fizz": "2"}, loaded)
+
+	assert.Nil(t, cache.RemovePrefix(ctx, "foo"))
+	assert.False(t, s.Exists("foo:fizz"))
+	assert.True(t, s.Exists("bar:fizz"))
+}

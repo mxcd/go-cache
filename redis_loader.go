@@ -3,7 +3,6 @@ package cache
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
 	"strings"
 	"sync"
@@ -58,7 +57,7 @@ func (b *RedisStorageBackend[K, V]) fetchEntriesWithPrefix(ctx context.Context, 
 	var wg sync.WaitGroup
 	var scanErr error
 
-	keyPattern := fmt.Sprintf("%s:%s*", b.Options.KeyPrefix, escapeRedisPattern(prefix))
+	keyPattern := escapeRedisPattern(b.keyNamespace()+prefix) + "*"
 
 	for {
 		var scanKeys []string
@@ -89,7 +88,7 @@ func (b *RedisStorageBackend[K, V]) fetchEntriesWithPrefix(ctx context.Context, 
 	keys := make(map[K]V)
 	for keyMap := range resultsChan {
 		for key, value := range keyMap {
-			key = strings.TrimPrefix(key, b.Options.KeyPrefix+":")
+			key = strings.TrimPrefix(key, b.keyNamespace())
 			unmarshalledKey, err := b.Options.CacheKey.Unmarshal(key)
 			if err != nil {
 				log.Printf("go-cache: error unmarshalling key %v: %v", key, err)
@@ -111,7 +110,7 @@ func (b *RedisStorageBackend[K, V]) fetchKeysWithPrefix(ctx context.Context, pre
 	var cursor uint64
 	var err error
 
-	keyPattern := fmt.Sprintf("%s:%s*", b.Options.KeyPrefix, escapeRedisPattern(prefix))
+	keyPattern := escapeRedisPattern(b.keyNamespace()+prefix) + "*"
 
 	var stringKeys []string
 
@@ -132,7 +131,7 @@ func (b *RedisStorageBackend[K, V]) fetchKeysWithPrefix(ctx context.Context, pre
 	keys := []K{}
 
 	for _, key := range stringKeys {
-		key = strings.TrimPrefix(key, b.Options.KeyPrefix+":")
+		key = strings.TrimPrefix(key, b.keyNamespace())
 		unmarshalledKey, err := b.Options.CacheKey.Unmarshal(key)
 		if err != nil {
 			log.Printf("go-cache: error unmarshalling key %v: %v", key, err)
