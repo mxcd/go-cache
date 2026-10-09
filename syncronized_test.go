@@ -490,3 +490,54 @@ func TestSynchronizedRemovePrefixAsync(t *testing.T) {
 	assert.False(t, s.Exists("test:pfx:b"))
 	assert.True(t, s.Exists("test:other:c"))
 }
+
+func TestSynchronizedRemovePrefixPropagatesToPeer(t *testing.T) {
+	s := miniredis.RunT(t)
+	defer s.Close()
+
+	s.Set("test:prefix:one", string(marshalTestData[string](t, "1")))
+	s.Set("test:other:one", string(marshalTestData[string](t, "x")))
+
+	newCache := func() *SynchronizedCache[string, string] {
+		backend, err := NewRedisStorageBackend[string, string](&RedisStorageBackendOptions[string]{
+			RedisOptions: &redis.Options{
+				Addr: s.Addr(),
+			},
+			KeyPrefix:         "test",
+			PubSub:            true,
+			PubSubChannelName: "pubsub",
+			TTL:               0,
+			CacheKey:          &StringCacheKey{},
+		})
+		assert.Nil(t, err)
+		t.Cleanup(func() { backend.Close() })
+
+		cache, err := NewSynchronizedCache[string, string](&SynchronizedCacheOptions[string, string]{
+			LocalTTL:       0,
+			LocalSize:      10,
+			CacheKey:       &StringCacheKey{},
+			StorageBackend: backend,
+			Preload:        true,
+		})
+		assert.Nil(t, err)
+		return cache
+	}
+
+	cacheOne := newCache()
+	cacheTwo := newCache()
+
+	_, ok := cacheTwo.local.Get("prefix:one")
+	assert.True(t, ok)
+
+	err := cacheOne.RemovePrefix(context.Background(), "prefix:")
+	assert.Nil(t, err)
+
+	// The peer drops the prefix on the pubsub event
+	assert.Eventually(t, func() bool {
+		_, ok := cacheTwo.local.Get("prefix:one")
+		return !ok
+	}, time.Second, 10*time.Millisecond)
+
+	_, ok = cacheTwo.local.Get("other:one")
+	assert.True(t, ok)
+}
